@@ -9,6 +9,7 @@ from nav_msgs.msg import OccupancyGrid
 
 from ca2_ttk4192.srv import isThroughObstacle, isThroughObstacleResponse, isInObstacle, isInObstacleResponse
 
+
 class Line():
     def __init__(self, p0, p1):
         self.p = np.array(p0)
