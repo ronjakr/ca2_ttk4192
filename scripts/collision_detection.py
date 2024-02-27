@@ -5,6 +5,9 @@ import numpy as np
 from shapely.geometry import LineString, Point, MultiPoint
 
 from visualization_msgs.msg import Marker, MarkerArray
+from nav_msgs.msg import OccupancyGrid
+
+from ca2_ttk4192.srv import isThroughObstacle, isThroughObstacleResponse, isInObstacle, isInObstacleResponse
 
 class Line():
     def __init__(self, p0, p1):
@@ -37,6 +40,9 @@ class CollisionDetector:
     def __init__(self):
 
         self.new_map = False
+        self.map = None
+
+        self.map_sub = rospy.Subscriber('/map', OccupancyGrid, self.map_cb)
 
         try: 
             self.map = OccupancyGrid()
@@ -57,6 +63,10 @@ class CollisionDetector:
 
         self.obstacles = []
         self.obstacle_objects = None
+
+    def map_cb(self, data):
+        self.map = data
+        self.new_map = True
 
 
     def create_obstacles_from_map(self):
