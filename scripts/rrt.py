@@ -1,10 +1,73 @@
 #!/usr/bin/env python3
 
 import rospy
+from collision_detection import distance
 
 from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Point
 from ca2_ttk4192.srv import isThroughObstacle, isThroughObstacleRequest, isInObstacle, isInObstacleRequest, positionControl, positionControlRequest
+
+class Node: # maybe create dictionary instead in order to create list of positions?
+    def __init__(self, position, parent) -> None:
+        self.node = position
+        self.parent = parent
+
+
+def random_configuration():
+    """
+    Samples a random point in space
+    """
+    pass
+
+
+def nearest_vertex(q_random, nodes):
+    """
+    Finding the node that is closest to q_random
+    """
+    nearest_vertex = min(nodes, key=lambda node: distance(q_random, node.position))
+    return nearest_vertex
+
+
+def new_configuration(q_nearest, q_random, delta_q):
+    """
+    Scaling distance between q_nearest and q_random to be
+    maximum equal to delta_q
+    """
+    distance = distance(q_nearest, q_random)
+
+    if distance > delta_q:
+        q_new = Point(q_new[0] + delta_q, q_new[1] + delta_q)  # TODO this is wrong, make it correct
+
+    return q_new
+
+
+def rrt_planner(q_init, q_end, K, delta_q) -> MarkerArray:  # K: number of vertices in RRT
+    obstacle_radius = 0.3
+    nodes = []   # "tree"/nodes/G
+    nodes.append(Node(position=q_init, parent=None))
+
+    for k in range(K):
+        q_random = random_configuration()   # a random point in space
+
+        i=0
+        while not isInObstacle(q_random,obstacle_radius):   # trying to sample a point in obstacle-free space
+            q_random = random_configuration()   # a random point in space
+            i+=1
+            if i == 10:
+                break
+
+        q_nearest = nearest_vertex(q_random, nodes)    # point in "tree" that is closest to the random point
+        q_new = new_configuration(q_nearest, q_random, delta_q)    # modifying configuration in case q_random is too far from q_nearest
+        if not (isInObstacle(q_new, obstacle_radius) and isThruObstacle(q_new, q_nearest, obstacle_radius)):
+            nodes.append(Node(position=q_new, parent=q_nearest))
+
+    nodes.append(Node(position=q_end, parent=q_new))
+    return nodes
+
+
+def visualize_path(tree):
+    pass
+
 
 
 point_in_obstacle_service = rospy.ServiceProxy('point_in_obstacle', isInObstacle)
@@ -14,7 +77,7 @@ def isInObstacle(vex, radius):
     vex_pos = Point(vex[0], vex[1], 0.0)
 
     request = isInObstacleRequest(vex_pos, radius)
-    response = point_in_obstacle_service(request)
+    response = point_in_obstacle_service(request)   # calling on service
 
     return response
 
@@ -28,7 +91,7 @@ def isThruObstacle(p0, p1, radius):
     p1_pos = Point(p1[0], p1[1], 0.0)
 
     request = isThroughObstacleRequest(p0_pos, p1_pos, radius)
-    response = path_through_obstacle_service(request)
+    response = path_through_obstacle_service(request)   # calling on service
 
     return response
 
@@ -68,57 +131,17 @@ def get_edge_as_marker(first_point, second_point, color, identity, thickness=0.0
 
 
 if __name__ == '__main__':
-
-
-
-    # -----------------
     # Init the RRT node
     rospy.init_node('RRT')
 
-
-
-    # -----------------------------------------------
-    # The start and end positions of the "short maze"
     startpos = (0.0, 0.0)
     endpos = (4.5, 5.0)
+    incremental_distance = 1
+    num_vertices = 100 # nodes
+
+    G = rrt_planner(q_init=startpos, q_end=endpos, K=num_vertices, delta_q=incremental_distance)
 
 
-
-    # -------------------------------------------------------------------------
-    # The start and end positions of the bonus task with the "complicated maze"
-    startpos = (0.0, 0.0)
-    endpos = (4.5, 9.0)
-
-
-    
-    # ---------------------------------------------------------------
-    # Example of how you can check if a point is inside an obstacle: 
-
-    obstacle_radius = 0.3
-    vex_pos = [0.0, 0.0]
-    response = isInObstacle(vex_pos, obstacle_radius)
-    print("point_in_obstacle_service response: ")
-    print(response)
-
-
-    
-    # -----------------------------------------------------------------------
-    # Example of how you can check if the straightline path between two points 
-    # goes through an obstacle:
-
-    obstacle_radius = 0.3
-    first_point = [0.0, 0.0]
-    second_point = [1.0, 1.0]
-    response = isThruObstacle(first_point, second_point, obstacle_radius)
-    print("path_through_obstacle_service response: ")
-    print(response)
-
-
-
-    # -----------------------------------------------------------------------
-    # Example of how you can visualize a graph using a MarkerArray publisher:
-
-    list_of_positions = [[0.0, 0.0], [0.0, 2.0], [1.0, 2.0], [1.0, 1.0]]
 
     tree_publisher = rospy.Publisher('tree_marker', MarkerArray, queue_size=10)
     tree_marker = MarkerArray()
@@ -127,13 +150,13 @@ if __name__ == '__main__':
     # Create a blue-green square representing the start
     start_rgb_color = [0/256, 158/256, 115/256]
     start_marker_size = 0.2
-    start_marker = get_marker(Marker.CUBE, list_of_positions[0], start_marker_size, start_rgb_color, marker_identity)
+    start_marker = get_marker(Marker.CUBE, G[-1].position, start_marker_size, start_rgb_color, marker_identity)
     marker_identity += 1
 
     # Create a vermillion square representing the goal
     end_rgb_color = [213/256, 94/256, 0/256]
     end_marker_size = 0.2
-    end_marker = get_marker(Marker.CUBE, list_of_positions[-1], end_marker_size, end_rgb_color, marker_identity)
+    end_marker = get_marker(Marker.CUBE, G[1].position, end_marker_size, end_rgb_color, marker_identity)
     marker_identity +=1
 
     tree_marker.markers.append(start_marker)
@@ -143,9 +166,9 @@ if __name__ == '__main__':
     # Create reddish purple edges 
     edge_color = [204/256, 121/256, 167/256]
     
-    for index in range(len(list_of_positions)-1):
-        first_point = list_of_positions[index]
-        second_point = list_of_positions[index+1]
+    for index in range(len(G)-1):
+        first_point = G[index].node
+        second_point = G[index+1].parent
         edge_marker = get_edge_as_marker(first_point, second_point, edge_color, marker_identity)
         marker_identity += 1
         tree_marker.markers.append(edge_marker)
@@ -165,7 +188,7 @@ if __name__ == '__main__':
     # It is also not very well tuned (and quite slow).
 
 
-    list_of_position = [[0.0, 2.0], [1.0, 2.0], [1.0, 1.0]]
+    list_of_position = [[0.0, 2.0], [1.0, 2.0], [1.0, 1.0]] # change to actual list of points by traversing from child to parent
     position_control = rospy.ServiceProxy('/position_control', positionControl)
 
     for position in list_of_position:
@@ -173,3 +196,9 @@ if __name__ == '__main__':
         request = Point(position[0], position[1], 0.0)
         response = position_control(request)
         print(response)
+
+
+
+
+
+
