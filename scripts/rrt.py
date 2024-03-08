@@ -2,71 +2,147 @@
 
 import rospy
 from collision_detection import distance
+import numpy as np
 
 from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Point
 from ca2_ttk4192.srv import isThroughObstacle, isThroughObstacleRequest, isInObstacle, isInObstacleRequest, positionControl, positionControlRequest
 
-class Node: # maybe create dictionary instead in order to create list of positions?
-    def __init__(self, position, parent) -> None:
-        self.node = position
-        self.parent = parent
-
 
 def random_configuration():
     """
-    Samples a random point in space
+    Samples a random point in space within the maze
     """
-    pass
+
+    # Define the range of x and y coordinates - undersøk manuelt i gazebo
+    x_min, x_max = 0, 10  # Example range for x coordinates
+    y_min, y_max = 0, 10  # Example range for y coordinates
+
+    # Number of samples
+    num_samples = 1
+
+    # Generate random x and y coordinates uniformly
+    x = np.random.uniform(x_min, x_max, num_samples)
+    y = np.random.uniform(y_min, y_max, num_samples)
+    return (x,y)
 
 
-def nearest_vertex(q_random, nodes):
+def nearest_vertex(q_random, node_dict):
     """
     Finding the node that is closest to q_random
     """
-    nearest_vertex = min(nodes, key=lambda node: distance(q_random, node.position))
+    nearest_vertex = min(node_dict, key=lambda node: distance(q_random, node))
+    # vurder numpy array
+    # kan finne nærmeste node som kan kobles til kollisjonsfritt - dersom nærmeste ikke ka ndet, sjekk nest nærmeste
     return nearest_vertex
 
 
-def new_configuration(q_nearest, q_random, delta_q):
+def scale_configuration(q_nearest, q_random, delta_q):
     """
     Scaling distance between q_nearest and q_random to be
-    maximum equal to delta_q
+    maximum equal to the maximum distance delta_q
     """
-    distance = distance(q_nearest, q_random)
 
-    if distance > delta_q:
-        q_new = Point(q_new[0] + delta_q, q_new[1] + delta_q)  # TODO this is wrong, make it correct
+    dist = distance(q_nearest, q_random)
+
+    # If the distance is greater than max distance, create a new point
+    if dist > delta_q:
+    # Calculate the direction vector
+        direction = (q_random - q_nearest) / dist
+        
+        # Scale the direction vector by max distance
+        scaled_direction = direction * delta_q
+        
+        # Calculate the scaled point
+        q_new = q_random + scaled_direction
 
     return q_new
 
 
-def rrt_planner(q_init, q_end, K, delta_q) -> MarkerArray:  # K: number of vertices in RRT
-    obstacle_radius = 0.3
-    nodes = []   # "tree"/nodes/G
-    nodes.append(Node(position=q_init, parent=None))
+def rrt_planner(q_init, q_end, delta_q) -> MarkerArray:  # K: number of vertices in RRT
+    obstacle_radius = 0.3   # safe margin around obstacles
+    distance_threshold = 0.3    # threshold for sufficient close to goal
+    run = True
 
-    for k in range(K):
+    marker_identity = 0 # initial marker identity
+    node_dict[q_init] = None
+    marker_identity = visualize_node(q_init, marker_identity)
+
+    while run:
         q_random = random_configuration()   # a random point in space
-
-        i=0
-        while not isInObstacle(q_random,obstacle_radius):   # trying to sample a point in obstacle-free space
-            q_random = random_configuration()   # a random point in space
-            i+=1
-            if i == 10:
-                break
-
-        q_nearest = nearest_vertex(q_random, nodes)    # point in "tree" that is closest to the random point
-        q_new = new_configuration(q_nearest, q_random, delta_q)    # modifying configuration in case q_random is too far from q_nearest
+        q_nearest = nearest_vertex(q_random, node_dict)    # point in "tree" that is closest to the random point
+        q_new = scale_configuration(q_nearest, q_random, delta_q)    # modifying configuration in case q_random is too far from q_nearest
+        
         if not (isInObstacle(q_new, obstacle_radius) and isThruObstacle(q_new, q_nearest, obstacle_radius)):
-            nodes.append(Node(position=q_new, parent=q_nearest))
+            node_dict[q_new] = q_nearest
+            marker_identity = visualize_node(q_new, marker_identity)
+            marker_identity = visualize_connection(q_new, q_nearest, marker_identity)
+            if distance(q_new, q_end) <= distance_threshold:
+                run = False
 
-    nodes.append(Node(position=q_end, parent=q_new))
-    return nodes
+    return node_dict
 
 
-def visualize_path(tree):
-    pass
+def visualize_connection(node, parent, marker_identity):
+    # Create reddish purple edges 
+    edge_color = [204/256, 121/256, 167/256]
+
+    edge_marker = get_edge_as_marker(node, parent, edge_color, marker_identity)
+    marker_identity += 1
+    tree_marker.markers.append(edge_marker)
+
+    rospy.Rate(0.5).sleep() # needs to a bit for the publisher to start, a bit weird. 
+    tree_publisher.publish(tree_marker)
+    
+    return marker_identity
+
+
+
+def visualize_node(node_pos, marker_identity, bool_start=False, bool_goal=False):
+
+    if bool_start == True:
+        # Create a blue-green square representing the start
+        start_rgb_color = [0/256, 158/256, 115/256]
+        start_marker_size = 0.2
+        start_marker = get_marker(Marker.CUBE, node_pos, start_marker_size, start_rgb_color, marker_identity)
+        tree_marker.markers.append(start_marker)
+    
+    if bool_goal == True:
+        # Create a vermillion square representing the goal
+        end_rgb_color = [213/256, 94/256, 0/256]
+        end_marker_size = 0.2
+        end_marker = get_marker(Marker.CUBE, node_pos, end_marker_size, end_rgb_color, marker_identity)
+        marker_identity +=1
+        tree_marker.markers.append(end_marker)
+
+    if (bool_start == False and bool_goal == False):
+        node_rgb_color = [0/256, 0/256, 256/256]
+        node_marker_size = 0.2
+        node_marker = get_marker(Marker.CYLINDER, node_pos, node_marker_size, node_rgb_color, marker_identity)
+        tree_marker.markers.append(node_marker)
+
+    rospy.Rate(0.5).sleep() # needs to a bit for the publisher to start, a bit weird. 
+    tree_publisher.publish(tree_marker)
+
+    marker_identity += 1
+    return marker_identity
+
+
+def positions_from_node_dict(node_dictionary, start_node, goal_node):
+    """
+    Returns the array of positions for the robot to follow
+    """
+
+    positions = []
+    positions.append(goal_node)
+    node = goal_node
+    while not (node == start_node):
+        parent = node_dictionary[node]
+        positions.insert(0, parent)
+        node = parent
+
+    positions.append(start_node)
+    return positions
 
 
 
@@ -136,59 +212,25 @@ if __name__ == '__main__':
 
     startpos = (0.0, 0.0)
     endpos = (4.5, 5.0)
-    incremental_distance = 1
-    num_vertices = 100 # nodes
+    max_incremental_distance = 3  # meters i guess
 
-    G = rrt_planner(q_init=startpos, q_end=endpos, K=num_vertices, delta_q=incremental_distance)
-
-
+    node_dict = {}  # key: node, value: parent-node
 
     tree_publisher = rospy.Publisher('tree_marker', MarkerArray, queue_size=10)
     tree_marker = MarkerArray()
-    marker_identity = 0
 
-    # Create a blue-green square representing the start
-    start_rgb_color = [0/256, 158/256, 115/256]
-    start_marker_size = 0.2
-    start_marker = get_marker(Marker.CUBE, G[-1].position, start_marker_size, start_rgb_color, marker_identity)
-    marker_identity += 1
-
-    # Create a vermillion square representing the goal
-    end_rgb_color = [213/256, 94/256, 0/256]
-    end_marker_size = 0.2
-    end_marker = get_marker(Marker.CUBE, G[1].position, end_marker_size, end_rgb_color, marker_identity)
-    marker_identity +=1
-
-    tree_marker.markers.append(start_marker)
-    tree_marker.markers.append(end_marker)
-
-    
-    # Create reddish purple edges 
-    edge_color = [204/256, 121/256, 167/256]
-    
-    for index in range(len(G)-1):
-        first_point = G[index].node
-        second_point = G[index+1].parent
-        edge_marker = get_edge_as_marker(first_point, second_point, edge_color, marker_identity)
-        marker_identity += 1
-        tree_marker.markers.append(edge_marker)
-
-
-    rospy.Rate(0.5).sleep() # needs to a bit for the publisher to start, a bit weird. 
-    tree_publisher.publish(tree_marker)
-
+    G = rrt_planner(q_init=startpos, q_end=endpos, delta_q=max_incremental_distance)    # dictionary
 
 
     # ---------------------------------------------------------------------------
-    # Example of how you can make the turtlebot go through a sequence of positions
-    # using the position controller.
+    # Make the turtlebot go through a sequence of positions using the position controller.
 
     # Note that it will just move in a straight line between the current position and the
     # desired position, so it will crash into possible obstacles. 
     # It is also not very well tuned (and quite slow).
 
 
-    list_of_position = [[0.0, 2.0], [1.0, 2.0], [1.0, 1.0]] # change to actual list of points by traversing from child to parent
+    list_of_position = positions_from_node_dict(G, start_node=startpos, goal_node=endpos)
     position_control = rospy.ServiceProxy('/position_control', positionControl)
 
     for position in list_of_position:

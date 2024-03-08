@@ -37,7 +37,7 @@ if __name__ == '__main__':
     # Example of how you can check if the straightline path between two points 
     # goes through an obstacle:
 
-    obstacle_radius = 0.3
+    obstacle_radius = 0.3 # margin
     first_point = [0.0, 0.0]
     second_point = [1.0, 1.0]
     response = isThruObstacle(first_point, second_point, obstacle_radius)
